@@ -30,6 +30,20 @@ def test_engine_fails_closed_on_incomplete_provider_result():
         AssessmentEngine({"codex": FakeProvider(payload)}).assess("text", "codex")
 
 
+@pytest.mark.parametrize("provider_name", ["codex", "claude"])
+def test_mcp_shared_engine_rejects_contradictory_ready(monkeypatch, provider_name):
+    payload = valid_assessment()
+    payload["owner_clarifications"] = ["Must active sessions survive migration?"]
+    monkeypatch.setattr(
+        "agent_ready.mcp_server.default_engine",
+        lambda: AssessmentEngine({provider_name: FakeProvider(payload)}),
+    )
+    with pytest.raises(AssessmentValidationError):
+        assess_work_unit("Migrate sessions.", provider_name)
+    assert payload["disposition"] == "READY"
+    assert payload["owner_clarifications"] == ["Must active sessions survive migration?"]
+
+
 def test_owner_unknown_is_not_confused_with_implementation_unknown():
     payload = valid_assessment("CLARIFY")
     payload["owner_clarifications"] = ["Must active sessions survive the migration?"]

@@ -17,6 +17,35 @@
     "next_action",
     "rationale"
   ],
+  "allOf": [
+    {
+      "if": {"properties": {"disposition": {"const": "READY"}}},
+      "then": {
+        "properties": {
+          "owner_clarifications": {"maxItems": 0},
+          "semantic_split_recommendation": {"maxItems": 0}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"disposition": {"const": "CLARIFY"}}},
+      "then": {
+        "properties": {
+          "owner_clarifications": {"minItems": 1}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"disposition": {"const": "SPLIT"}}},
+      "then": {
+        "properties": {
+          "owner_clarifications": {"maxItems": 0},
+          "independent_decision_centers": {"minItems": 2},
+          "semantic_split_recommendation": {"minItems": 2}
+        }
+      }
+    }
+  ],
   "properties": {
     "disposition": {
       "type": "string",

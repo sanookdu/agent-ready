@@ -1,5 +1,6 @@
 """Test-only subprocess boundary; never installed as a provider or production mode."""
 
+import json
 import os
 import subprocess
 import sys
@@ -21,6 +22,10 @@ def fake_run(args, **kwargs):
         return subprocess.CompletedProcess(args, 0, stdout=version, stderr="")
     if case == "failure":
         return subprocess.CompletedProcess(args, 1, stdout="", stderr="private-canary")
+    if case == "contradictory":
+        payload = json.loads((ROOT / "examples" / "ready.json").read_text())
+        payload["owner_clarifications"] = ["private-canary: Must sessions survive migration?"]
+        return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload), stderr="")
     output = (
         '{"disposition":"READY"}'
         if case == "malformed"

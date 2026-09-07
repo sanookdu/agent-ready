@@ -41,7 +41,9 @@ async def test_real_stdio_server_exposes_only_text_assessment():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("case", ["ready", "clarify", "split", "hold", "malformed", "failure"])
+@pytest.mark.parametrize(
+    "case", ["ready", "clarify", "split", "hold", "malformed", "contradictory", "failure"]
+)
 async def test_stdio_full_engine_and_provider_boundary(case):
     helper = Path(__file__).parent / "helpers" / "fake_host.py"
     params = StdioServerParameters(command=sys.executable, args=[str(helper), "mcp", case])
@@ -53,7 +55,7 @@ async def test_stdio_full_engine_and_provider_boundary(case):
                 result = await session.call_tool(
                     "assess_work_unit", {"text": "/not/read/task.md", "provider": provider}
                 )
-                if case in ("malformed", "failure"):
+                if case in ("malformed", "contradictory", "failure"):
                     assert result.isError
                     assert result.structuredContent is None
                     assert "private-canary" not in str(result)
