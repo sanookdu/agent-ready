@@ -1,0 +1,17 @@
+name: Feature request
+description: Describe a problem and the outcome you need.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem being solved
+    validations:
+      required: true
+  - type: textarea
+    id: insufficient
+    attributes:
+      label: Why existing behavior is insufficient
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Proposed outcome

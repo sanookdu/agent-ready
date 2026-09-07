@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a reproducible defect with sanitized evidence.
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Agent Ready version
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Python version
+  - type: input
+    id: provider
+    attributes:
+      label: Provider CLI and version
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or MCP request (sanitized)
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Sanitized reproduction
+      description: This Issue is public. Do not include secrets or private task content.
+    validations:
+      required: true

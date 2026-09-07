@@ -1,0 +1,69 @@
+name: Share an assessment case
+description: Submit a sanitized case or counterexample; research permission is optional.
+title: "[Case]: "
+body:
+  - type: markdown
+    attributes:
+      value: "This Issue is public. Remove secrets and private information. Feedback is welcome without research permission."
+  - type: textarea
+    id: work
+    attributes:
+      label: Sanitized original work unit
+    validations:
+      required: true
+  - type: dropdown
+    id: disposition
+    attributes:
+      label: Agent Ready disposition
+      options: [READY, CLARIFY, SPLIT, HOLD, Error]
+    validations:
+      required: true
+  - type: textarea
+    id: assessment
+    attributes:
+      label: Sanitized assessment and version
+  - type: input
+    id: implementation
+    attributes:
+      label: Implementation agent and model, if known
+  - type: input
+    id: verification
+    attributes:
+      label: Verification agent and model, if known
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Actual outcome
+  - type: dropdown
+    id: first-pass
+    attributes:
+      label: First-pass verdict
+      options: [Not attempted, Accepted, Rejected, Unknown]
+  - type: input
+    id: rework
+    attributes:
+      label: Rework count, if known
+  - type: textarea
+    id: intervention
+    attributes:
+      label: Founder or human intervention
+  - type: textarea
+    id: locality
+    attributes:
+      label: Rejection locality, if applicable
+  - type: textarea
+    id: right
+    attributes:
+      label: What Agent Ready got right
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What Agent Ready got wrong
+  - type: checkboxes
+    id: research-permission
+    attributes:
+      label: Research permission (optional)
+      description: Leaving this unchecked does not prevent submission. Without permission, feedback may inform maintenance and discussion but will not be intentionally incorporated as a case into research datasets, published examples or publications.
+      options:
+        - label: I give the Agent Ready maintainers permission to use, anonymize, quote, summarize, and incorporate the information submitted in this Issue into public project research, documentation, examples, aggregate analysis, and publications.
+          required: false
