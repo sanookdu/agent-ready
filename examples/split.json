@@ -1,0 +1,20 @@
+{
+  "disposition": "SPLIT",
+  "governing_intent": "Two independent outcomes: passkey authentication and an opt-in reading report.",
+  "summary": "Separately acceptable outcomes should be separate work units.",
+  "owner_clarifications": [],
+  "implementation_unknowns": [],
+  "independent_decision_centers": [
+    "Passkey authentication and recovery.",
+    "Opt-in reading-statistics reporting."
+  ],
+  "semantic_split_recommendation": [
+    "Implement passkey authentication against its frozen policy and acceptance suite; it can be accepted independently of reporting.",
+    "Implement the reading report against its consent policy and report acceptance suite; it uses the stable account-ID API and can be rejected independently of login."
+  ],
+  "verification_assessment": "Authentication and reporting require two unrelated acceptance verdicts.",
+  "expected_rework_locality": "LOW",
+  "material_risks": [],
+  "next_action": "Create two semantic work units with their respective approved acceptance suites.",
+  "rationale": "The boundary follows independently rejectable outcomes, not file counts or technical size. Owner intent is already resolved."
+}

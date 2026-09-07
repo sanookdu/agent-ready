@@ -1,0 +1,16 @@
+{
+  "disposition": "HOLD",
+  "governing_intent": "Implement an importer conforming to the approved partner interface.",
+  "summary": "Required interface artifacts are unavailable.",
+  "owner_clarifications": [],
+  "implementation_unknowns": [],
+  "independent_decision_centers": [],
+  "semantic_split_recommendation": [],
+  "verification_assessment": "Conformance cannot be verified until the signed interface and fixtures arrive.",
+  "expected_rework_locality": "HIGH",
+  "material_risks": [
+    "Inventing the missing interface would violate the approved conformance requirement."
+  ],
+  "next_action": "Obtain the signed interface specification and conformance fixtures, then reassess.",
+  "rationale": "The owner decision is settled; the missing external artifacts are prerequisites, so HOLD controls."
+}

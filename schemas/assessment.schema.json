@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Ready assessment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "disposition",
+    "governing_intent",
+    "summary",
+    "owner_clarifications",
+    "implementation_unknowns",
+    "independent_decision_centers",
+    "semantic_split_recommendation",
+    "verification_assessment",
+    "expected_rework_locality",
+    "material_risks",
+    "next_action",
+    "rationale"
+  ],
+  "properties": {
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "READY",
+        "CLARIFY",
+        "SPLIT",
+        "HOLD"
+      ]
+    },
+    "governing_intent": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "owner_clarifications": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "implementation_unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "independent_decision_centers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "semantic_split_recommendation": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "verification_assessment": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "expected_rework_locality": {
+      "type": "string",
+      "enum": [
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ]
+    },
+    "material_risks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "next_action": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    }
+  }
+}

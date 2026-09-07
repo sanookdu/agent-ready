@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-ready"
+version = "0.1.0rc1"
+description = "A local readiness gate for autonomous software work."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Agent Ready maintainers" }]
+dependencies = [
+  "jsonschema>=4.18,<5",
+  "mcp>=1.29,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1", "build>=1.2,<2"]
+
+[project.scripts]
+agent-ready = "agent_ready.cli:main"
+agent-ready-mcp = "agent_ready.mcp_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_ready"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"schemas/assessment.schema.json" = "agent_ready/resources/assessment.schema.json"
+"prompts/readiness.md" = "agent_ready/resources/readiness.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
