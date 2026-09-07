@@ -760,7 +760,7 @@ Before v0.1.0 release:
 9. privacy documentation exists;
 10. security documentation exists;
 11. all examples are synthetic;
-12. no FactoryChecks information exists anywhere in repository;
+12. No FactoryChecks-derived implementation material, examples, architecture, issue content, operational history, or other private/proprietary information may appear in the public Agent Ready repository. References inside this specification that explicitly prohibit such inclusion are exempt from this rule;
 13. MIT license present;
 14. community Issue templates present;
 15. implementation independently reviewed.
