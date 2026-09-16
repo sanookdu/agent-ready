@@ -42,8 +42,11 @@ instructions do not assume a package has been published to PyPI.
 Install and authenticate one supported provider CLI separately using its official
 instructions: [Codex](https://developers.openai.com/codex/cli) or
 [Claude Code](https://code.claude.com/docs/en/overview). v0.1 accepts **Codex CLI
-0.153.4** (analysis model `gpt-5.5`) and **Claude Code 2.1.258** only. Other versions fail closed pending
-capability review. The executable must be on the MCP host's PATH as well as yours.
+0.153.4** (analysis model `gpt-5.5`) as **SUPPORTED**. Other Codex versions are
+**COMPATIBLE_UNVERIFIED** only after a credential-free local contract probe passes.
+Missing/incompatible required capabilities fail closed as **INCOMPATIBLE**; a version
+string difference alone does not reject a provider. Claude remains pinned to
+**Claude Code 2.1.258**. The executable must be on the MCP host's PATH as well as yours.
 Agent Ready uses your provider access; inference may incur provider charges. Codex
 authentication uses your local `auth.json` or `CODEX_API_KEY`; keyring-only setups
 are not supported in v0.1. Custom provider configurations and models are intentionally
@@ -76,6 +79,10 @@ or remote transport. Its only tool is:
 
 Call this input with `assess_work_unit`. Supply the actual text, not a path to read.
 A path-like string in `text` is only text. Additional input keys are rejected.
+Successful Codex results include host-measured `provider_evidence`: actual CLI
+version, compatibility classification, and probe status. The model cannot supply
+or override this evidence. Existing assessment fields and dispositions are unchanged.
+
 The response has the same validated JSON object as the CLI in `structuredContent`
 and a JSON text block. Failures have `isError: true` and no assessment.
 

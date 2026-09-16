@@ -25,15 +25,26 @@ class AssessmentEngine:
             raise ValueError("Select a supported provider: codex or claude.")
         # JSON escapes plus escaped angle brackets keep delimiters unambiguous.
         data = json.dumps(text, ensure_ascii=True).replace("<", "\\u003c").replace(">", "\\u003e")
+        model_schema = {**SCHEMA, "properties": dict(SCHEMA["properties"])}
+        model_schema["properties"].pop("provider_evidence", None)
         prompt = (
             resource_text("readiness.md")
             + "\nOutput JSON Schema:\n"
-            + json.dumps(SCHEMA)
+            + json.dumps(model_schema)
             + "\n<untrusted_task_text>\n"
             + data
             + "\n</untrusted_task_text>\n"
         )
-        return validate_assessment(self.providers[provider].assess(prompt))
+        adapter = self.providers[provider]
+        result = adapter.assess(prompt)
+        if isinstance(result, dict):
+            result = dict(result)
+            # Version/probe evidence is measured by the host, never model authority.
+            result.pop("provider_evidence", None)
+            evidence = getattr(adapter, "evidence", None)
+            if evidence is not None:
+                result["provider_evidence"] = dict(evidence)
+        return validate_assessment(result)
 
 
 def default_engine() -> AssessmentEngine:

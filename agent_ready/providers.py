@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -24,12 +25,36 @@ def _invalid_constant(value):
     raise ValueError("Non-JSON constant")
 
 
+def isolated_codex_environment(env, runtime, *, copy_auth=True):
+    """Use empty homes for both assessments and probes; copy only fixed auth."""
+    env = dict(env)
+    original = Path(env.get("CODEX_HOME", str(Path.home() / ".codex")))
+    isolated = Path(runtime) / "codex"
+    isolated.mkdir(mode=0o700)
+    credential = original / "auth.json"
+    if copy_auth and credential.is_file():
+        with credential.open("rb") as stream:
+            auth = stream.read(131073)
+        if len(auth) > 131072:
+            raise ProviderError("Provider authentication artifact exceeds the size limit.")
+        target = isolated / "auth.json"
+        target.touch(mode=0o600)
+        target.write_bytes(auth)
+    env["CODEX_HOME"] = str(isolated)
+    isolated_home = Path(runtime) / "home"
+    isolated_home.mkdir(mode=0o700)
+    env["HOME"] = str(isolated_home)
+    env["USERPROFILE"] = str(isolated_home)
+    return env
+
+
 class _Adapter:
     executable: str
     version: str
 
     def __init__(self, runner=None):
         self.runner = runner or subprocess.run
+        self.evidence = None
 
     def command(self, runtime: Path) -> list[str]:
         raise NotImplementedError
@@ -66,32 +91,14 @@ class _Adapter:
                 cwd = Path(runtime) / "work"
                 cwd.mkdir()
                 if self.executable == "codex":
-                    # Codex loads global instructions even with ignore-user-config.
-                    # Isolate its state; copy only the fixed authentication artifact.
-                    original = Path(env.get("CODEX_HOME", str(Path.home() / ".codex")))
-                    isolated = Path(runtime) / "codex"
-                    isolated.mkdir(mode=0o700)
-                    credential = original / "auth.json"
-                    if credential.is_file():
-                        with credential.open("rb") as stream:
-                            auth = stream.read(131073)
-                        if len(auth) > 131072:
-                            raise ProviderError(
-                                "Provider authentication artifact exceeds the size limit."
-                            )
-                        target = isolated / "auth.json"
-                        target.touch(mode=0o600)
-                        target.write_bytes(auth)
-                    env["CODEX_HOME"] = str(isolated)
-                    isolated_home = Path(runtime) / "home"
-                    isolated_home.mkdir(mode=0o700)
-                    env["HOME"] = str(isolated_home)
-                    env["USERPROFILE"] = str(isolated_home)
+                    env = isolated_codex_environment(env, runtime)
                 options = dict(
                     text=True, encoding="utf-8", capture_output=True, shell=False, cwd=cwd, env=env
                 )
                 version = self.runner([self.executable, "--version"], timeout=10, **options)
-                if version.returncode or version.stdout.strip() != self.version:
+                if self.executable == "codex":
+                    self.check_compatibility(version, options)
+                elif version.returncode or version.stdout.strip() != self.version:
                     raise ProviderError(
                         f"Unsupported {self.executable} version; requires {self.version}."
                     )
@@ -123,6 +130,32 @@ class _Adapter:
 class CodexAdapter(_Adapter):
     executable = "codex"
     version = "codex-cli 0.153.4"
+
+    reviewed_versions = frozenset({"codex-cli 0.153.4"})
+
+    def check_compatibility(self, version, options):
+        actual = version.stdout.strip()
+        self.evidence = None
+        if version.returncode or not re.fullmatch(
+            r"codex-cli [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?", actual
+        ):
+            raise ProviderError("INCOMPATIBLE Codex version discovery response.")
+        self.evidence = {
+            "provider": "codex",
+            "version": actual,
+            "compatibility": "INCOMPATIBLE",
+            "capability_probe": "FAILED",
+        }
+        if actual in self.reviewed_versions:
+            self.evidence.update(compatibility="SUPPORTED", capability_probe="REVIEWED_VERSION")
+            return
+        from .codex_compatibility import probe_codex
+
+        try:
+            probe_codex(self, options)
+        except (OSError, UnicodeError, ValueError, subprocess.TimeoutExpired):
+            raise ProviderError("INCOMPATIBLE Codex: required capability probe failed.") from None
+        self.evidence.update(compatibility="COMPATIBLE_UNVERIFIED", capability_probe="PASSED")
 
     def command(self, runtime: Path) -> list[str]:
         args = [

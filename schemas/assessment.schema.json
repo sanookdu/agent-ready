@@ -19,29 +19,59 @@
   ],
   "allOf": [
     {
-      "if": {"properties": {"disposition": {"const": "READY"}}},
+      "if": {
+        "properties": {
+          "disposition": {
+            "const": "READY"
+          }
+        }
+      },
       "then": {
         "properties": {
-          "owner_clarifications": {"maxItems": 0},
-          "semantic_split_recommendation": {"maxItems": 0}
+          "owner_clarifications": {
+            "maxItems": 0
+          },
+          "semantic_split_recommendation": {
+            "maxItems": 0
+          }
         }
       }
     },
     {
-      "if": {"properties": {"disposition": {"const": "CLARIFY"}}},
+      "if": {
+        "properties": {
+          "disposition": {
+            "const": "CLARIFY"
+          }
+        }
+      },
       "then": {
         "properties": {
-          "owner_clarifications": {"minItems": 1}
+          "owner_clarifications": {
+            "minItems": 1
+          }
         }
       }
     },
     {
-      "if": {"properties": {"disposition": {"const": "SPLIT"}}},
+      "if": {
+        "properties": {
+          "disposition": {
+            "const": "SPLIT"
+          }
+        }
+      },
       "then": {
         "properties": {
-          "owner_clarifications": {"maxItems": 0},
-          "independent_decision_centers": {"minItems": 2},
-          "semantic_split_recommendation": {"minItems": 2}
+          "owner_clarifications": {
+            "maxItems": 0
+          },
+          "independent_decision_centers": {
+            "minItems": 2
+          },
+          "semantic_split_recommendation": {
+            "minItems": 2
+          }
         }
       }
     }
@@ -128,6 +158,55 @@
       "type": "string",
       "minLength": 1,
       "pattern": "\\S"
+    },
+    "provider_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "version",
+        "compatibility",
+        "capability_probe"
+      ],
+      "properties": {
+        "provider": {
+          "const": "codex"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^codex-cli [0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$"
+        },
+        "compatibility": {
+          "enum": [
+            "SUPPORTED",
+            "COMPATIBLE_UNVERIFIED"
+          ]
+        },
+        "capability_probe": {
+          "enum": [
+            "REVIEWED_VERSION",
+            "PASSED"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "compatibility": {
+                "const": "COMPATIBLE_UNVERIFIED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "capability_probe": {
+                "const": "PASSED"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

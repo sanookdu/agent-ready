@@ -20,6 +20,8 @@ def _human(assessment: dict) -> str:
         label = key.replace("_", " ").capitalize()
         if isinstance(value, list):
             lines.append(label + ": " + ("; ".join(value) if value else "None"))
+        elif isinstance(value, dict):
+            lines.append(label + ": " + json.dumps(value, sort_keys=True))
         else:
             lines.append(label + ": " + value)
     # Model output is untrusted, including terminal control sequences.
