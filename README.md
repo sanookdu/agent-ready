@@ -81,6 +81,7 @@ nothing is exposed remotely.) Its only tool is:
 
 Call this input with `assess_work_unit`. Supply the actual text, not a path to read.
 A path-like string in `text` is only text. Additional input keys are rejected.
+`text` is limited to 100,000 characters, the same assessment-text limit as the CLI.
 Successful Codex results include host-measured `provider_evidence`: actual CLI
 version, compatibility classification, and probe status. The model cannot supply
 or override this evidence. Existing assessment fields and dispositions are unchanged.
