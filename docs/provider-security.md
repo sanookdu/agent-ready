@@ -37,8 +37,22 @@ passed the new offline probe but is intentionally classified as
 Successful Codex assessments carry host-generated `provider_evidence` with the
 actual version and compatibility/probe status. INCOMPATIBLE has no assessment;
 failures remain sanitized and never become READY/HOLD results. Model-supplied
-provider evidence is discarded. The public schema accepts the new optional evidence
-field without making old saved assessments invalid.
+provider evidence is discarded. `REVIEWED_VERSION` means no runtime probe was run
+because the reported version is in the reviewed set; `PASSED` means this invocation's
+probe passed. Only `SUPPORTED/REVIEWED_VERSION` and `COMPATIBLE_UNVERIFIED/PASSED`
+validate. Schema validation checks shape only: it cannot authenticate that a saved
+document's evidence was host-measured rather than edited later.
+
+Contract transition: the optional field keeps old saved assessments valid, but a reader
+that validates with the earlier schema (`additionalProperties: false`) rejects every
+enriched Codex result. Readers must tolerate the optional field. The v0.1 contract is
+versioned by the package release; a result-level product/schema version identifier is
+tracked separately (issue #1) and is not part of this change.
+
+The probe itself never receives copied credentials or task text; the `--version`
+discovery that precedes it runs in the assessment environment with the copied
+`auth.json`, and the probe's decoding of the wire request is as strict as assessment
+output decoding (duplicate keys and non-JSON constants are rejected).
 
 Claude's installed help documents `--tools ""`, `--safe-mode`,
 `--strict-mcp-config`, empty settings sources and disabled slash commands. The

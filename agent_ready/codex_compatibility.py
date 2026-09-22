@@ -11,6 +11,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
 
+from .providers import _invalid_constant, _unique_object
+
 _REQUIRED_HELP = (
     "--sandbox",
     "read-only",
@@ -37,7 +39,7 @@ def probe_codex(adapter, assessment_options):
         }
         # Seed an untrusted original home, then exercise the same isolation helper
         # as assessment. The selected homes/cwd must remain empty of instructions.
-        from .providers import _invalid_constant, _unique_object, isolated_codex_environment
+        from .providers import isolated_codex_environment
 
         origin = runtime / "origin"
         origin.mkdir()
@@ -72,9 +74,15 @@ def probe_codex(adapter, assessment_options):
                     length = int(self.headers.get("Content-Length", "0"))
                     if not 0 < length <= 1_000_000 or self.path != "/v1/responses":
                         raise ValueError("Invalid probe request")
-                    payload = json.loads(self.rfile.read(length))
+                    # The same strict decoding as assessment output: a duplicate "tools" key
+                    # or a non-JSON constant is an ambiguous wire request, never certified.
+                    payload = json.loads(
+                        self.rfile.read(length),
+                        object_pairs_hook=_unique_object,
+                        parse_constant=_invalid_constant,
+                    )
                     requests.append(payload)
-                except (ValueError, OSError):
+                except (ValueError, OSError, RecursionError):
                     requests.append(None)
                     self.send_error(400)
                     return

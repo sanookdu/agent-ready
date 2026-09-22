@@ -174,19 +174,22 @@
         },
         "version": {
           "type": "string",
-          "pattern": "^codex-cli [0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$"
+          "pattern": "^codex-cli [0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$",
+          "description": "The CLI-reported version string, not verified binary identity."
         },
         "compatibility": {
           "enum": [
             "SUPPORTED",
             "COMPATIBLE_UNVERIFIED"
-          ]
+          ],
+          "description": "SUPPORTED: the version is in the reviewed set. COMPATIBLE_UNVERIFIED: an unreviewed version that passed the local capability probe for this invocation."
         },
         "capability_probe": {
           "enum": [
             "REVIEWED_VERSION",
             "PASSED"
-          ]
+          ],
+          "description": "REVIEWED_VERSION: no runtime probe was run because the version is reviewed. PASSED: the runtime probe passed. Only SUPPORTED/REVIEWED_VERSION and COMPATIBLE_UNVERIFIED/PASSED are valid pairs; INCOMPATIBLE/FAILED never appears in an assessment."
         }
       },
       "allOf": [
@@ -205,8 +208,25 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "compatibility": {
+                "const": "SUPPORTED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "capability_probe": {
+                "const": "REVIEWED_VERSION"
+              }
+            }
+          }
         }
-      ]
+      ],
+      "description": "Host-measured provider facts attached by Agent Ready after the model responds; model-supplied values are discarded. Emitted for Codex only in v0.1. Schema validation checks shape; it does not authenticate that a saved document's evidence was host-measured."
     }
   }
 }

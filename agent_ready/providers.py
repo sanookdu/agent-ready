@@ -153,7 +153,7 @@ class CodexAdapter(_Adapter):
 
         try:
             probe_codex(self, options)
-        except (OSError, UnicodeError, ValueError, subprocess.TimeoutExpired):
+        except (OSError, UnicodeError, ValueError, RecursionError, subprocess.TimeoutExpired):
             raise ProviderError("INCOMPATIBLE Codex: required capability probe failed.") from None
         self.evidence.update(compatibility="COMPATIBLE_UNVERIFIED", capability_probe="PASSED")
 

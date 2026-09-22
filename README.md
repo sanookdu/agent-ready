@@ -70,8 +70,10 @@ and next action, then includes every assessment field.
 
 ## Local MCP
 
-Run `agent-ready-mcp` as a host-managed **stdio subprocess**. It has no HTTP listener
-or remote transport. Its only tool is:
+Run `agent-ready-mcp` as a host-managed **stdio subprocess**. Its transport is stdio
+only; it has no remote transport. (During a Codex assessment on an unreviewed CLI
+version, the capability probe briefly opens a loopback-only listener on `127.0.0.1`;
+nothing is exposed remotely.) Its only tool is:
 
 ```json
 {"text":"Implement the approved archive compatibility migration...","provider":"codex"}
@@ -82,6 +84,11 @@ A path-like string in `text` is only text. Additional input keys are rejected.
 Successful Codex results include host-measured `provider_evidence`: actual CLI
 version, compatibility classification, and probe status. The model cannot supply
 or override this evidence. Existing assessment fields and dispositions are unchanged.
+Readers must accept this optional field: a reader that validates against the earlier
+schema (which rejects unknown fields) rejects enriched Codex results. Old saved
+assessments remain valid. The v0.1 contract is versioned by the package release only;
+results carry no product or schema version identifier yet
+([#1](https://github.com/sanookdu/agent-ready/issues/1)).
 
 The response has the same validated JSON object as the CLI in `structuredContent`
 and a JSON text block. Failures have `isError: true` and no assessment.

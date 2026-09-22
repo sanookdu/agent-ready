@@ -40,16 +40,25 @@ malicious provider executable or compromised host. Its Python process must load 
 own package, public prompt/schema and dependencies; this is not model-directed file
 access. Provider software must read authentication and may keep its own state.
 
-For v0.1 the supported versions are exactly Codex 0.153.4 and Claude Code 2.1.258.
-Unknown versions fail before submitting content. Version strings are compatibility
-checks, not binary attestation. Adapter updates require renewed capability review,
-including a local fake-provider wire probe, since flags and default tools can change.
+For v0.1 the fully reviewed versions are Codex 0.153.4 (`SUPPORTED`) and Claude Code
+2.1.258 (exact requirement). Any other Claude version fails before submitting content.
+Any other Codex version must first pass a local capability probe — required CLI
+controls, one synthetic request to a temporary loopback endpoint with `tools: []`, no
+private-instruction leakage, expected JSON output — and is then classified
+`COMPATIBLE_UNVERIFIED`; a failed probe blocks submission. The probe runs without
+copied credentials, but the preceding `--version` discovery runs in the assessment
+environment, which does carry the copied Codex `auth.json`. Version strings are
+CLI-reported compatibility checks, not binary attestation. Adapter updates require
+renewed capability review, since flags and default tools can change.
 Managed provider policies may cause a safe error; never remove controls to work around
 one. See [provider evidence](docs/provider-security.md).
 
 The input/output limits and 180-second inference timeout bound ordinary usage, not
 all denial-of-service risks. This is a trusted local subprocess integration, not a
-multi-tenant service. There is no HTTP server or background daemon to expose remotely.
+multi-tenant service. There is no background daemon and nothing listens remotely. The
+Codex capability probe opens a temporary listener bound to `127.0.0.1` on an ephemeral
+port for one synthetic request during an assessment and closes it before inference; it
+performs no client authentication, consistent with the trusted-host boundary above.
 
 ## Reporting
 

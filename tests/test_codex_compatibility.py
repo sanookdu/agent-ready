@@ -39,22 +39,29 @@ class ContractRunner:
                 del body["tools"]
             if self.defect == "leak":
                 body["input"] += " PRIVATE_INSTRUCTION_CANARY"
+            data = json.dumps(body).encode()
+            if self.defect == "duplicate_request_keys":
+                # A permissive decoder would keep the LAST "tools" and certify a tool-exposing CLI.
+                data = b'{"model":"gpt-5.5","tools":[{"type":"function","name":"shell"}],"tools":[],"input":"Agent Ready capability probe. Return only the synthetic JSON response."}'
+            if self.defect == "nan_request":
+                data = b'{"model":"gpt-5.5","tools":[],"input":"Agent Ready capability probe. Return only the synthetic JSON response.","temperature":NaN}'
             if self.defect != "no_request":
-                with urlopen(
-                    Request(
-                        url,
-                        data=json.dumps(body).encode(),
-                        headers={"Content-Type": "application/json"},
-                    ),
-                    timeout=5,
-                ) as response:
-                    response.read()
+                try:
+                    with urlopen(
+                        Request(url, data=data, headers={"Content-Type": "application/json"}),
+                        timeout=5,
+                    ) as response:
+                        response.read()
+                except OSError:
+                    pass  # a rejected probe request is the server's verdict, not the runner's
             return subprocess.CompletedProcess(
                 args,
                 0,
                 stdout=(
                     '{"probe":"bad","probe":"agent-ready"}'
                     if self.defect == "duplicate_keys"
+                    else "[" * 100_000 + "]" * 100_000
+                    if self.defect == "deep_output"
                     else "not json"
                     if self.defect == "output"
                     else '{"probe":"agent-ready"}'
@@ -88,7 +95,18 @@ def test_supported_or_capability_verified_provider_is_accepted(version, classifi
 
 @pytest.mark.parametrize(
     "defect",
-    ["missing_flag", "tools", "missing_tools", "leak", "output", "no_request", "duplicate_keys"],
+    [
+        "missing_flag",
+        "tools",
+        "missing_tools",
+        "leak",
+        "output",
+        "no_request",
+        "duplicate_keys",
+        "duplicate_request_keys",
+        "nan_request",
+        "deep_output",
+    ],
 )
 def test_incompatible_contract_fails_before_private_assessment(defect):
     runner = ContractRunner(defect=defect)
@@ -120,6 +138,49 @@ def test_cli_renders_host_provider_evidence():
         "capability_probe": "PASSED",
     }
     assert "codex-cli 0.154.0" in _human(payload)
+
+
+@pytest.mark.parametrize(
+    "compatibility,probe",
+    [("COMPATIBLE_UNVERIFIED", "REVIEWED_VERSION"), ("SUPPORTED", "PASSED")],
+)
+def test_public_schema_accepts_only_the_evidence_pairs_the_adapter_emits(compatibility, probe):
+    """Independent review found SUPPORTED/PASSED accepted although never emitted: an undefined
+    combination in a public contract."""
+    from agent_ready.contracts import AssessmentValidationError, validate_assessment
+
+    payload = valid_assessment()
+    payload["provider_evidence"] = {
+        "provider": "codex",
+        "version": "codex-cli 0.154.0",
+        "compatibility": compatibility,
+        "capability_probe": probe,
+    }
+    with pytest.raises(AssessmentValidationError):
+        validate_assessment(payload)
+
+
+def test_a_reader_pinned_to_the_pre_evidence_schema_rejects_enriched_results():
+    """Documented, not hidden: the baseline schema has additionalProperties=false, so a reader
+    validating with the pre-evidence contract rejects every enriched Codex result. Optionality
+    protects old artifacts, not old readers; readers must accept the optional field."""
+    from jsonschema import Draft202012Validator
+
+    from agent_ready.contracts import SCHEMA
+
+    old = {
+        **SCHEMA,
+        "properties": {k: v for k, v in SCHEMA["properties"].items() if k != "provider_evidence"},
+    }
+    enriched = valid_assessment()
+    enriched["provider_evidence"] = {
+        "provider": "codex",
+        "version": "codex-cli 0.154.0",
+        "compatibility": "COMPATIBLE_UNVERIFIED",
+        "capability_probe": "PASSED",
+    }
+    assert not Draft202012Validator(old).is_valid(enriched)
+    assert Draft202012Validator(old).is_valid(valid_assessment())
 
 
 def test_public_schema_rejects_unverified_compatibility_without_passed_probe():
