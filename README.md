@@ -45,8 +45,10 @@ instructions: [Codex](https://developers.openai.com/codex/cli) or
 0.153.4** (analysis model `gpt-5.5`) as **SUPPORTED**. Other Codex versions are
 **COMPATIBLE_UNVERIFIED** only after a credential-free local contract probe passes.
 Missing/incompatible required capabilities fail closed as **INCOMPATIBLE**; a version
-string difference alone does not reject a provider. Claude remains pinned to
-**Claude Code 2.1.258**. The executable must be on the MCP host's PATH as well as yours.
+string difference alone does not reject a provider. **Claude Code 2.1.258** is the
+reviewed Claude version (**SUPPORTED**); other Claude Code versions are
+**COMPATIBLE_UNVERIFIED** only after the equivalent credential-free probe passes.
+The executable must be on the MCP host's PATH as well as yours.
 Agent Ready uses your provider access; inference may incur provider charges. Codex
 authentication uses your local `auth.json` or `CODEX_API_KEY`; keyring-only setups
 are not supported in v0.1. Custom provider configurations and models are intentionally
@@ -71,8 +73,8 @@ and next action, then includes every assessment field.
 ## Local MCP
 
 Run `agent-ready-mcp` as a host-managed **stdio subprocess**. Its transport is stdio
-only; it has no remote transport. (During a Codex assessment on an unreviewed CLI
-version, the capability probe briefly opens a loopback-only listener on `127.0.0.1`;
+only; it has no remote transport. (During an assessment on an unreviewed CLI
+version of either provider, the capability probe briefly opens a loopback-only listener on `127.0.0.1`;
 nothing is exposed remotely.) Its only tool is:
 
 ```json

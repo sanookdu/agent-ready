@@ -1,9 +1,8 @@
 # Provider capability review
 
 Reviewed on 2026-09-07 against installed Codex CLI 0.153.4 and Claude Code 2.1.258.
-Codex 0.153.4 remains the explicit fully reviewed version (`SUPPORTED`). Claude
-2.1.258 remains an exact runtime requirement. Unlisted Codex versions must pass the
-contract probe below before private task text is sent for assessment; passing yields
+Codex 0.153.4 and Claude Code 2.1.258 are the explicit fully reviewed versions
+(`SUPPORTED`). Unlisted versions of either provider must pass the contract probe below before private task text is sent for assessment; passing yields
 `COMPATIBLE_UNVERIFIED`, not a claim of full version review. No minimum-version
 comparison or permissive version wildcard substitutes for capability evidence.
 
@@ -43,9 +42,39 @@ probe passed. Only `SUPPORTED/REVIEWED_VERSION` and `COMPATIBLE_UNVERIFIED/PASSE
 validate. Schema validation checks shape only: it cannot authenticate that a saved
 document's evidence was host-measured rather than edited later.
 
+## Claude Code
+
+Claude Code 2.1.258 was previously an exact runtime requirement: any other version
+failed before submitting content, although no incompatibility had been demonstrated.
+On 2026-09-24 Claude Code 2.1.281 was observed to accept every adapter flag and to
+return schema-valid assessments, so the exact pin rejected a working provider while
+proving nothing about the boundary it stood for. It is replaced by the same
+reviewed-set-plus-probe policy as Codex.
+
+The boundary is that the adapter's flags (`--tools ""`, `--safe-mode`,
+`--setting-sources ""`, `--strict-mcp-config` with an empty MCP configuration,
+`--disable-slash-commands`, `--no-session-persistence`, `--permission-mode dontAsk`)
+yield a tool-less model with no host instructions. For each assessment using an
+unlisted Claude Code version, the probe checks those flags appear in `--help`, then
+runs the unmodified assessment command against a temporary loopback fake Messages
+endpoint (`ANTHROPIC_BASE_URL`), with a fixed non-secret placeholder key and no
+assessment credential. A synthetic home carries user-instruction and skill canaries
+and the working directory carries a project-instruction canary. Every request must be
+a strictly decoded `POST /v1/messages` with `tools: []`; any other path or method
+fails. The synthetic prompt must arrive, no canary may appear on the wire, the process
+must exit 0, and stdout must be the expected JSON. It never invokes live inference and
+uses a 10-second help limit and 60-second subprocess limit.
+
+Negative controls observed against the real 2.1.281 CLI on 2026-09-24: removing
+`--tools ""` sends the full tool list; removing `--setting-sources ""` and
+`--safe-mode` leaks the user and project instruction canaries. Both are detected.
+Successful Claude assessments now carry host-generated `provider_evidence` with
+`provider: "claude"`; the schema binds each provider to its own version format.
+The reviewed-version set contains only `2.1.258 (Claude Code)`.
+
 Contract transition: the optional field keeps old saved assessments valid, but a reader
 that validates with the earlier schema (`additionalProperties: false`) rejects every
-enriched Codex result. Readers must tolerate the optional field. The v0.1 contract is
+enriched Codex or Claude result. Readers must tolerate the optional field. The v0.1 contract is
 versioned by the package release; a result-level product/schema version identifier is
 tracked separately (issue #1) and is not part of this change.
 

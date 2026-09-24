@@ -96,12 +96,7 @@ class _Adapter:
                     text=True, encoding="utf-8", capture_output=True, shell=False, cwd=cwd, env=env
                 )
                 version = self.runner([self.executable, "--version"], timeout=10, **options)
-                if self.executable == "codex":
-                    self.check_compatibility(version, options)
-                elif version.returncode or version.stdout.strip() != self.version:
-                    raise ProviderError(
-                        f"Unsupported {self.executable} version; requires {self.version}."
-                    )
+                self.check_compatibility(version, options)
                 result = self.runner(
                     self.command(Path(runtime)), input=prompt, timeout=180, **options
                 )
@@ -243,6 +238,34 @@ class CodexAdapter(_Adapter):
 class ClaudeAdapter(_Adapter):
     executable = "claude"
     version = "2.1.258 (Claude Code)"
+
+    reviewed_versions = frozenset({"2.1.258 (Claude Code)"})
+
+    def check_compatibility(self, version, options):
+        actual = version.stdout.strip()
+        self.evidence = None
+        if version.returncode or not re.fullmatch(
+            r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)? \(Claude Code\)", actual
+        ):
+            raise ProviderError("INCOMPATIBLE Claude Code version discovery response.")
+        self.evidence = {
+            "provider": "claude",
+            "version": actual,
+            "compatibility": "INCOMPATIBLE",
+            "capability_probe": "FAILED",
+        }
+        if actual in self.reviewed_versions:
+            self.evidence.update(compatibility="SUPPORTED", capability_probe="REVIEWED_VERSION")
+            return
+        from .claude_compatibility import probe_claude
+
+        try:
+            probe_claude(self, options)
+        except (OSError, UnicodeError, ValueError, RecursionError, subprocess.TimeoutExpired):
+            raise ProviderError(
+                "INCOMPATIBLE Claude Code: required capability probe failed."
+            ) from None
+        self.evidence.update(compatibility="COMPATIBLE_UNVERIFIED", capability_probe="PASSED")
 
     def command(self, runtime: Path) -> list[str]:
         return [
