@@ -1,0 +1,318 @@
+"""Thin, capability-constrained subprocess adapters; no provider-specific rubric."""
+
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+
+class ProviderError(RuntimeError):
+    """Provider invocation failed; never substitute an assessment."""
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _invalid_constant(value):
+    raise ValueError("Non-JSON constant")
+
+
+def isolated_codex_environment(env, runtime, *, copy_auth=True):
+    """Use empty homes for both assessments and probes; copy only fixed auth."""
+    env = dict(env)
+    original = Path(env.get("CODEX_HOME", str(Path.home() / ".codex")))
+    isolated = Path(runtime) / "codex"
+    isolated.mkdir(mode=0o700)
+    credential = original / "auth.json"
+    if copy_auth and credential.is_file():
+        with credential.open("rb") as stream:
+            auth = stream.read(131073)
+        if len(auth) > 131072:
+            raise ProviderError("Provider authentication artifact exceeds the size limit.")
+        target = isolated / "auth.json"
+        target.touch(mode=0o600)
+        target.write_bytes(auth)
+    env["CODEX_HOME"] = str(isolated)
+    isolated_home = Path(runtime) / "home"
+    isolated_home.mkdir(mode=0o700)
+    env["HOME"] = str(isolated_home)
+    env["USERPROFILE"] = str(isolated_home)
+    return env
+
+
+def isolated_claude_environment(env, runtime, *, copy_auth=True):
+    """Use an empty home for both assessments and probes; copy only the credential file.
+
+    Host settings, hooks, MCP servers, instructions, skills, agents, commands, output styles
+    and plugins all live under the user's home. None of them is carried into the isolated one,
+    so the assessment does not rely on CLI flags alone to exclude them.
+    """
+    env = dict(env)
+    original = Path(env.get("HOME", str(Path.home()))) / ".claude"
+    isolated_home = Path(runtime) / "claude-home"
+    (isolated_home / ".claude").mkdir(mode=0o700, parents=True)
+    credential = original / ".credentials.json"
+    if copy_auth and credential.is_file():
+        with credential.open("rb") as stream:
+            auth = stream.read(131073)
+        if len(auth) > 131072:
+            raise ProviderError("Provider authentication artifact exceeds the size limit.")
+        target = isolated_home / ".claude" / ".credentials.json"
+        target.touch(mode=0o600)
+        target.write_bytes(auth)
+    env["HOME"] = str(isolated_home)
+    env["USERPROFILE"] = str(isolated_home)
+    return env
+
+
+class _Adapter:
+    executable: str
+    version: str
+
+    def __init__(self, runner=None):
+        self.runner = runner or subprocess.run
+        self.evidence = None
+
+    def command(self, runtime: Path) -> list[str]:
+        raise NotImplementedError
+
+    def assess(self, prompt: str) -> object:
+        # Preserve only explicit runtime/authentication inputs. Never expose them
+        # to the model or copy arbitrary tool/config/telemetry environment knobs.
+        names = (
+            "PATH",
+            "HOME",
+            "USERPROFILE",
+            "SYSTEMROOT",
+            "WINDIR",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "TEMP",
+            "TMP",
+        )
+        names += (
+            ("CODEX_HOME", "OPENAI_API_KEY", "CODEX_API_KEY")
+            if self.executable == "codex"
+            else ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+        )
+        env = {name: os.environ[name] for name in names if name in os.environ}
+        env.update(
+            {
+                "DISABLE_TELEMETRY": "1",
+                "DISABLE_ERROR_REPORTING": "1",
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            }
+        )
+        try:
+            with TemporaryDirectory(prefix="agent-ready-") as runtime:
+                cwd = Path(runtime) / "work"
+                cwd.mkdir()
+                if self.executable == "codex":
+                    env = isolated_codex_environment(env, runtime)
+                else:
+                    env = isolated_claude_environment(env, runtime)
+                options = dict(
+                    text=True, encoding="utf-8", capture_output=True, shell=False, cwd=cwd, env=env
+                )
+                version = self.runner([self.executable, "--version"], timeout=10, **options)
+                self.check_compatibility(version, options)
+                result = self.runner(
+                    self.command(Path(runtime)), input=prompt, timeout=180, **options
+                )
+        except FileNotFoundError:
+            raise ProviderError(f"{self.executable} is not installed or not on PATH.") from None
+        except subprocess.TimeoutExpired:
+            raise ProviderError("Analysis provider timed out; no assessment produced.") from None
+        except (OSError, UnicodeError):
+            raise ProviderError(
+                "Analysis provider could not run; no assessment produced."
+            ) from None
+        if result.returncode:
+            raise ProviderError(
+                "Analysis provider failed; check local authentication and availability."
+            )
+        if len(result.stdout) > 1_000_000:
+            raise ProviderError("Analysis provider output exceeds the response limit.")
+        try:
+            return json.loads(
+                result.stdout, object_pairs_hook=_unique_object, parse_constant=_invalid_constant
+            )
+        except (ValueError, RecursionError):
+            raise ProviderError("Analysis provider did not return valid JSON.") from None
+
+
+class CodexAdapter(_Adapter):
+    executable = "codex"
+    version = "codex-cli 0.153.4"
+
+    reviewed_versions = frozenset({"codex-cli 0.153.4"})
+
+    def check_compatibility(self, version, options):
+        actual = version.stdout.strip()
+        self.evidence = None
+        if version.returncode or not re.fullmatch(
+            r"codex-cli [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?", actual
+        ):
+            raise ProviderError("INCOMPATIBLE Codex version discovery response.")
+        self.evidence = {
+            "provider": "codex",
+            "version": actual,
+            "compatibility": "INCOMPATIBLE",
+            "capability_probe": "FAILED",
+        }
+        if actual in self.reviewed_versions:
+            self.evidence.update(compatibility="SUPPORTED", capability_probe="REVIEWED_VERSION")
+            return
+        from .codex_compatibility import probe_codex
+
+        try:
+            probe_codex(self, options)
+        except (OSError, UnicodeError, ValueError, RecursionError, subprocess.TimeoutExpired):
+            raise ProviderError("INCOMPATIBLE Codex: required capability probe failed.") from None
+        self.evidence.update(compatibility="COMPATIBLE_UNVERIFIED", capability_probe="PASSED")
+
+    def command(self, runtime: Path) -> list[str]:
+        args = [
+            "codex",
+            "exec",
+            "--sandbox",
+            "read-only",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--color",
+            "never",
+        ]
+        # A fixed minimal model catalog removes model-dependent patch tools.
+        # Tool feature flags alone do not remove apply_patch in this CLI version.
+        catalog = Path(runtime) / "model.json"
+        catalog.write_text(
+            json.dumps(
+                {
+                    "models": [
+                        {
+                            "slug": "gpt-5.5",
+                            "display_name": "gpt-5.5",
+                            "description": "Text-only analysis",
+                            "supported_reasoning_levels": [],
+                            "shell_type": "disabled",
+                            "visibility": "list",
+                            "supported_in_api": True,
+                            "priority": 0,
+                            "base_instructions": "Assess software work using the supplied rubric. No tools are available.",
+                            "supports_reasoning_summaries": False,
+                            "support_verbosity": False,
+                            "truncation_policy": {"mode": "bytes", "limit": 10000},
+                            "supports_parallel_tool_calls": False,
+                            "experimental_supported_tools": [],
+                            "input_modalities": ["text"],
+                            "apply_patch_tool_type": None,
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        config = {
+            "model": '"gpt-5.5"',
+            "model_catalog_json": json.dumps(str(catalog)),
+            "approval_policy": '"never"',
+            "web_search": '"disabled"',
+            "project_doc_max_bytes": "0",
+            "analytics.enabled": "false",
+            "feedback.enabled": "false",
+            "tools.experimental_request_user_input.enabled": "false",
+            "features.skip_host_skill_discovery": "true",
+        }
+        for feature in (
+            "shell_tool",
+            "unified_exec",
+            "view_image",
+            "apps",
+            "plugins",
+            "hooks",
+            "memories",
+            "multi_agent",
+            "multi_agent_v2",
+            "image_generation",
+            "browser_use",
+            "browser_use_external",
+            "computer_use",
+            "code_mode",
+            "code_mode_host",
+            "skill_search",
+            "skill_mcp_dependency_install",
+            "shell_snapshot",
+            "workspace_dependencies",
+            "tool_suggest",
+            "remote_plugin",
+        ):
+            config["features." + feature] = "false"
+        for key, value in config.items():
+            args.extend(["-c", key + "=" + value])
+        return args + ["-"]
+
+
+class ClaudeAdapter(_Adapter):
+    executable = "claude"
+    version = "2.1.258 (Claude Code)"
+
+    reviewed_versions = frozenset({"2.1.258 (Claude Code)"})
+
+    def check_compatibility(self, version, options):
+        actual = version.stdout.strip()
+        self.evidence = None
+        if version.returncode or not re.fullmatch(
+            r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)? \(Claude Code\)", actual
+        ):
+            raise ProviderError("INCOMPATIBLE Claude Code version discovery response.")
+        self.evidence = {
+            "provider": "claude",
+            "version": actual,
+            "compatibility": "INCOMPATIBLE",
+            "capability_probe": "FAILED",
+        }
+        if actual in self.reviewed_versions:
+            self.evidence.update(compatibility="SUPPORTED", capability_probe="REVIEWED_VERSION")
+            return
+        from .claude_compatibility import probe_claude
+
+        try:
+            probe_claude(self, options)
+        except (OSError, UnicodeError, ValueError, RecursionError, subprocess.TimeoutExpired):
+            raise ProviderError(
+                "INCOMPATIBLE Claude Code: required capability probe failed."
+            ) from None
+        self.evidence.update(compatibility="COMPATIBLE_UNVERIFIED", capability_probe="PASSED")
+
+    def command(self, runtime: Path) -> list[str]:
+        return [
+            "claude",
+            "--print",
+            "--output-format",
+            "text",
+            "--tools",
+            "",
+            "--safe-mode",
+            "--strict-mcp-config",
+            "--mcp-config",
+            '{"mcpServers":{}}',
+            "--setting-sources",
+            "",
+            "--disable-slash-commands",
+            "--no-chrome",
+            "--no-session-persistence",
+            "--permission-mode",
+            "dontAsk",
+            "--system-prompt",
+            "You assess software work. Follow the Agent Ready rubric supplied in stdin.",
+        ]

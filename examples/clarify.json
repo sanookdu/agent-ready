@@ -1,0 +1,18 @@
+{
+  "disposition": "CLARIFY",
+  "governing_intent": "Migrate session persistence without inventing cutover behavior.",
+  "summary": "Session continuity is an unresolved owner compatibility decision.",
+  "owner_clarifications": [
+    "Must active sessions survive the migration?"
+  ],
+  "implementation_unknowns": [
+    "Locate the existing session serializer and storage adapter."
+  ],
+  "independent_decision_centers": [],
+  "semantic_split_recommendation": [],
+  "verification_assessment": "Cutover acceptance cannot be fixed until the owner decides session continuity.",
+  "expected_rework_locality": "HIGH",
+  "material_risks": [],
+  "next_action": "Ask the owner to decide session continuity, then define cutover acceptance and reassess.",
+  "rationale": "Continuity is a product compatibility choice; locating existing adapters is engineering research, not an owner question."
+}

@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Ready assessment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "disposition",
+    "governing_intent",
+    "summary",
+    "owner_clarifications",
+    "implementation_unknowns",
+    "independent_decision_centers",
+    "semantic_split_recommendation",
+    "verification_assessment",
+    "expected_rework_locality",
+    "material_risks",
+    "next_action",
+    "rationale"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "disposition": {
+            "const": "READY"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "owner_clarifications": {
+            "maxItems": 0
+          },
+          "semantic_split_recommendation": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "disposition": {
+            "const": "CLARIFY"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "owner_clarifications": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "disposition": {
+            "const": "SPLIT"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "owner_clarifications": {
+            "maxItems": 0
+          },
+          "independent_decision_centers": {
+            "minItems": 2
+          },
+          "semantic_split_recommendation": {
+            "minItems": 2
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "READY",
+        "CLARIFY",
+        "SPLIT",
+        "HOLD"
+      ]
+    },
+    "governing_intent": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "owner_clarifications": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "implementation_unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "independent_decision_centers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "semantic_split_recommendation": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "verification_assessment": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "expected_rework_locality": {
+      "type": "string",
+      "enum": [
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ]
+    },
+    "material_risks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      }
+    },
+    "next_action": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "provider_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "version",
+        "compatibility",
+        "capability_probe"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "codex",
+            "claude"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "description": "The CLI-reported version string, not verified binary identity. Its format is bound to the provider."
+        },
+        "compatibility": {
+          "enum": [
+            "SUPPORTED",
+            "COMPATIBLE_UNVERIFIED"
+          ],
+          "description": "SUPPORTED: the version is in the reviewed set. COMPATIBLE_UNVERIFIED: an unreviewed version that passed the local capability probe for this invocation."
+        },
+        "capability_probe": {
+          "enum": [
+            "REVIEWED_VERSION",
+            "PASSED"
+          ],
+          "description": "REVIEWED_VERSION: no runtime probe was run because the version is reviewed. PASSED: the runtime probe passed. Only SUPPORTED/REVIEWED_VERSION and COMPATIBLE_UNVERIFIED/PASSED are valid pairs; INCOMPATIBLE/FAILED never appears in an assessment."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "codex"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "version": {
+                "pattern": "^codex-cli [0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "provider": {
+                "const": "claude"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "version": {
+                "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)? \\(Claude Code\\)$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "compatibility": {
+                "const": "COMPATIBLE_UNVERIFIED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "capability_probe": {
+                "const": "PASSED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "compatibility": {
+                "const": "SUPPORTED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "capability_probe": {
+                "const": "REVIEWED_VERSION"
+              }
+            }
+          }
+        }
+      ],
+      "description": "Host-measured provider facts attached by Agent Ready after the model responds; model-supplied values are discarded. Emitted for Codex only in v0.1. Schema validation checks shape; it does not authenticate that a saved document's evidence was host-measured."
+    }
+  }
+}
