@@ -8,6 +8,7 @@ import json
 import re
 import shlex
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -39,6 +40,8 @@ _CANARIES = (
 )
 # Top-level Messages request keys that can attach tools other than `tools` itself.
 _TOOL_CHANNEL_KEYS = ("mcp_servers", "container")
+# Total time allowed to read one request body, so joining handler threads is bounded.
+_READ_DEADLINE_S = 10.0
 _PROBE_TEXT = "Agent Ready capability probe. Return only the synthetic JSON response."
 _RESPONSE_TEXT = '{"probe":"agent-ready"}'
 # Never a real credential: the probe endpoint is loopback and accepts any key.
@@ -107,6 +110,13 @@ def probe_claude(adapter, assessment_options):
         (origin / ".claude.json").write_text(json.dumps(mcp))
         env["HOME"] = str(origin)
         env = isolated_claude_environment(env, runtime, copy_auth=False)
+        # The CLI resolves user-scope configuration from the isolated home it actually runs
+        # under, so seed that home too: the flags must also exclude user-scope customizations,
+        # tested per version rather than assumed from the home change alone.
+        home = Path(env["HOME"])
+        mcp = _seed_customizations(home, sentinels, "isolated-home")
+        (home / ".claude" / "CLAUDE.md").write_text(_CANARIES[0])
+        (home / ".claude.json").write_text(json.dumps(mcp))
         # Project-level customizations the adapter's flags must exclude, since the working
         # directory is not isolated by a home change.
         cwd = runtime / "work"
@@ -122,11 +132,25 @@ def probe_claude(adapter, assessment_options):
         ):
             raise ValueError("Required CLI controls missing")
         requests = []
+        # Every request's method, path (including query) and headers, inspected with the bodies.
+        observed = []
 
         class Handler(BaseHTTPRequestHandler):
             def setup(self):
                 super().setup()
                 self.connection.settimeout(5)
+
+            def parse_request(self):
+                ok = super().parse_request()
+                observed.append([self.command, self.path, dict(self.headers)] if ok else None)
+                return ok
+
+            def __getattr__(self, name):
+                # Any method without a handler (TRACE, CONNECT, custom verbs) is refused and
+                # recorded, never answered 501 unseen.
+                if name.startswith("do_"):
+                    return self._refuse
+                raise AttributeError(name)
 
             def _refuse(self):
                 requests.append(None)  # outside the reviewed contract: never certified
@@ -134,9 +158,27 @@ def probe_claude(adapter, assessment_options):
 
             do_GET = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = _refuse
 
+            def _read_body(self, length):
+                deadline = time.monotonic() + _READ_DEADLINE_S
+                data = b""
+                while len(data) < length:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise ValueError("Probe request body not received in time")
+                    self.connection.settimeout(min(remaining, 5))
+                    chunk = self.rfile.read1(length - len(data))
+                    if not chunk:
+                        raise ValueError("Truncated probe request body")
+                    data += chunk
+                return data
+
             def do_HEAD(self):
                 # Observed from the real CLI: a body-less connectivity check. Nothing else.
-                if self.path != "/api/hello":
+                if (
+                    self.path != "/api/hello"
+                    or self.headers.get("Content-Length", "0") != "0"
+                    or "Transfer-Encoding" in self.headers
+                ):
                     self._refuse()
                     return
                 self.send_response(200)
@@ -151,7 +193,7 @@ def probe_claude(adapter, assessment_options):
                     # The same strict decoding as assessment output: a duplicate "tools" key
                     # or a non-JSON constant is an ambiguous wire request, never certified.
                     payload = json.loads(
-                        self.rfile.read(length),
+                        self._read_body(length),
                         object_pairs_hook=_unique_object,
                         parse_constant=_invalid_constant,
                     )
@@ -236,7 +278,12 @@ def probe_claude(adapter, assessment_options):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
-        if result.returncode or not requests or not all(isinstance(r, dict) for r in requests):
+        if (
+            result.returncode
+            or not requests
+            or not all(isinstance(r, dict) for r in requests)
+            or not all(isinstance(o, list) for o in observed)
+        ):
             raise ValueError("Probe request/response failed")
         if any(sentinels.iterdir()):
             raise ValueError("A local hook or MCP server executed")
@@ -246,7 +293,7 @@ def probe_claude(adapter, assessment_options):
             for request in requests
         ):
             raise ValueError("Text-only tool contract failed")
-        wire = json.dumps(requests)
+        wire = json.dumps([requests, observed])
         if _PROBE_TEXT not in wire or any(canary in wire for canary in _CANARIES):
             raise ValueError("Instruction isolation failed")
         if json.loads(

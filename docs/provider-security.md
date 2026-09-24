@@ -62,22 +62,29 @@ empty MCP configuration, `--disable-slash-commands`, `--no-session-persistence`,
 directory, which a home change cannot isolate.
 
 For each assessment using an unlisted Claude Code version, the probe checks those flags
-appear in `--help`. It then seeds an untrusted original home and a project directory
-with every customization class above: instruction, skill, agent, command and
-output-style canaries, plus settings hooks and MCP servers whose commands create
-tripwire files. It applies the same isolation helper as the assessment, and runs the
-unmodified assessment command against a temporary loopback fake Messages endpoint
+appear in `--help`. It seeds three places with every customization class above
+(instruction, skill, agent, command and output-style canaries, plus settings hooks and
+MCP servers whose commands create tripwire files):
+- an untrusted original home, which exercises the same isolation helper as the
+  assessment;
+- the isolated home the CLI then actually runs under, so the flags are tested at user
+  scope for each version rather than assumed from the home change;
+- the project directory.
+It then runs the unmodified assessment command against a temporary loopback fake Messages endpoint
 (`ANTHROPIC_BASE_URL`) with a fixed non-secret placeholder key and no assessment
 credential. The probe fails if any of the following holds:
 - a tripwire file exists afterwards (a hook or MCP server executed locally);
-- any request is anything other than a strictly decoded `POST /v1/messages`,
-  except a body-less `HEAD /api/hello` connectivity check observed from the real CLI;
+- any request of any HTTP method is anything other than a strictly decoded
+  `POST /v1/messages`, except a body-less `HEAD /api/hello` connectivity check
+  observed from the real CLI;
 - any request carries non-empty `tools`, or a top-level `mcp_servers` or `container`
   key (other ways the Messages API attaches tools);
-- a canary appears on the wire, or the synthetic prompt does not;
+- a canary appears anywhere on the wire (request bodies, paths including query
+  strings, or headers), or the synthetic prompt does not appear in a request body;
 - the process exits non-zero, or stdout is not the expected JSON.
 
-The loopback server joins its handler threads before the checks run. The probe never
+The loopback server joins its handler threads before the checks run. Each request
+body must arrive within a total 10-second deadline, so the join is bounded. The probe never
 invokes live inference, and uses a 10-second help limit and a 60-second subprocess
 limit.
 
@@ -86,13 +93,18 @@ channels, not an allowlist, so a future tool channel under a new key would not b
 by it. `tools: []` and the isolation layers still apply. On macOS, Claude Code may read
 credentials from the Keychain, which is not tied to the home directory; the probe
 relies on the placeholder `ANTHROPIC_API_KEY` taking precedence there, which has not
-been verified on macOS. If a CLI ignored `ANTHROPIC_BASE_URL`, the synthetic prompt
+been verified on macOS. With subscription OAuth, a token refresh during an assessment
+is written to the temporary credential copy, which is then deleted. If the provider
+rotates refresh tokens, the stored credential could be invalidated. This is untested,
+since testing it needs real credentials. The Codex adapter's copied `auth.json` has the
+same property. If a CLI ignored `ANTHROPIC_BASE_URL`, the synthetic prompt
 would go to the real API with the placeholder key, be refused, and fail closed; no task
 text or credential is sent.
 
 Negative controls observed against the real 2.1.281 CLI on 2026-09-24: removing
 `--tools ""` sends the full tool list; removing `--setting-sources ""` and
-`--safe-mode` leaks the instruction canaries and is refused by the probe.
+`--safe-mode` leaks the instruction canaries and fires both the isolated-home and
+project hook tripwires, and is refused by the probe.
 Successful Claude assessments now carry host-generated `provider_evidence` with
 `provider: "claude"`; the schema binds each provider to its own version format.
 The reviewed-version set contains only `2.1.258 (Claude Code)`.

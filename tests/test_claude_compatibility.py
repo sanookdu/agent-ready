@@ -17,6 +17,29 @@ _FLAGS = (
 _PROBE_TEXT = "Agent Ready capability probe. Return only the synthetic JSON response."
 
 
+def _trickle(base, seconds=8.0):
+    """A local client that declares a body and then sends it one byte at a time."""
+    import socket
+    import threading
+    import time
+
+    host, port = base.removeprefix("http://").split(":")
+
+    def run():
+        try:
+            with socket.create_connection((host, int(port)), timeout=5) as s:
+                s.sendall(b"POST /v1/messages HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\n")
+                deadline = time.monotonic() + seconds
+                while time.monotonic() < deadline:
+                    s.sendall(b"x")
+                    time.sleep(0.3)
+        except OSError:
+            pass
+
+    threading.Thread(target=run, daemon=True).start()
+    time.sleep(0.2)
+
+
 class ContractRunner:
     """Stands in for the Claude Code CLI: posts what a real CLI would send to the loopback probe."""
 
@@ -40,12 +63,40 @@ class ContractRunner:
             self.probe_calls += 1
             self.probe_envs.append(dict(kwargs["env"]))
             assert "actual private task" not in kwargs["input"]
-            if self.defect == "project_hook":
-                # A CLI that honoured project settings would run the seeded hook locally,
-                # which never appears on the wire.
-                settings = Path(kwargs["cwd"]) / ".claude" / "settings.json"
-                hooks = json.loads(settings.read_text())["hooks"]["UserPromptSubmit"]
-                subprocess.run(hooks[0]["hooks"][0]["command"], shell=True, check=True)
+            # A CLI that honoured settings would run a seeded hook or MCP server locally,
+            # which never appears on the wire. Nothing to honour means nothing runs.
+            scope = {
+                "project_hook": Path(kwargs["cwd"]),
+                "home_hook": Path(kwargs["env"]["HOME"]),
+            }.get(self.defect)
+            if scope and (scope / ".claude" / "settings.json").is_file():
+                settings = json.loads((scope / ".claude" / "settings.json").read_text())
+                hook = settings["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+                subprocess.run(hook, shell=True, check=True)
+            if self.defect == "project_mcp" and (Path(kwargs["cwd"]) / ".mcp.json").is_file():
+                server = json.loads((Path(kwargs["cwd"]) / ".mcp.json").read_text())
+                server = server["mcpServers"]["private"]
+                subprocess.run([server["command"], *server["args"]], check=True)
+            home_instructions = Path(kwargs["env"]["HOME"]) / ".claude" / "CLAUDE.md"
+            if self.defect == "trace_method":
+                try:
+                    with urlopen(Request(base + "/v1/messages", method="TRACE"), timeout=5) as r:
+                        r.read()
+                except OSError:
+                    pass
+            if self.defect == "head_body":
+                try:
+                    with urlopen(
+                        Request(
+                            base + "/api/hello", data=b"PRIVATE_INSTRUCTION_CANARY", method="HEAD"
+                        ),
+                        timeout=5,
+                    ) as response:
+                        response.read()
+                except OSError:
+                    pass
+            if self.defect == "trickle":
+                _trickle(base)
             if self.defect in ("head_hello", "head_other"):
                 target = "/api/hello" if self.defect == "head_hello" else "/v1/other"
                 try:
@@ -78,10 +129,14 @@ class ContractRunner:
                 body["system"].append({"type": "text", "text": "PROJECT_INSTRUCTION_CANARY"})
             if self.defect == "skill_leak":
                 body["system"].append({"type": "text", "text": "PRIVATE_SKILL_CANARY"})
+            if self.defect == "home_leak" and home_instructions.is_file():
+                body["system"].append({"type": "text", "text": home_instructions.read_text()})
             if self.defect == "mcp_servers":
                 body["mcp_servers"] = [
                     {"type": "url", "url": "https://example.invalid", "name": "x"}
                 ]
+            if self.defect == "container":
+                body["container"] = {"skills": [{"type": "custom", "skill_id": "x"}]}
             if self.defect == "missing_probe_text":
                 body["messages"] = [{"role": "user", "content": "something else"}]
             data = json.dumps(body).encode()
@@ -98,7 +153,13 @@ class ContractRunner:
             path = "/v1/messages?beta=true"
             if self.defect == "unexpected_path":
                 path = "/v1/complete"
-            posts = 0 if self.defect == "no_request" else 1
+            if self.defect == "query_leak":
+                path = "/v1/messages?c=PRIVATE_INSTRUCTION_CANARY"
+            headers = {"Content-Type": "application/json"}
+            if self.defect == "header_leak":
+                headers["X-Context"] = "PRIVATE_INSTRUCTION_CANARY"
+            # A CLI that ignores ANTHROPIC_BASE_URL sends nothing to the probe endpoint.
+            posts = 0 if self.defect in ("no_request", "ignores_base_url") else 1
             if self.defect == "second_request_with_tools":
                 posts = 2
             for index in range(posts):
@@ -107,9 +168,7 @@ class ContractRunner:
                     payload = json.dumps({**body, "tools": [{"name": "Bash"}]}).encode()
                 try:
                     with urlopen(
-                        Request(
-                            base + path, data=payload, headers={"Content-Type": "application/json"}
-                        ),
+                        Request(base + path, data=payload, headers=headers),
                         timeout=5,
                     ) as response:
                         response.read()
@@ -188,6 +247,15 @@ def test_reviewed_or_capability_verified_claude_is_accepted(version, classificat
         "get_request",
         "head_other",
         "project_hook",
+        "home_hook",
+        "home_leak",
+        "project_mcp",
+        "container",
+        "trace_method",
+        "head_body",
+        "header_leak",
+        "query_leak",
+        "ignores_base_url",
     ],
 )
 def test_incompatible_claude_fails_before_private_assessment(defect):
@@ -196,6 +264,21 @@ def test_incompatible_claude_fails_before_private_assessment(defect):
     with pytest.raises(ProviderError, match="INCOMPATIBLE"):
         adapter.assess("actual private task")
     assert adapter.evidence["compatibility"] == "INCOMPATIBLE"
+    assert runner.live_calls == 0
+
+
+def test_a_trickling_client_cannot_stall_the_probe(monkeypatch):
+    """Re-review N3: joining handler threads must be bounded by a total read deadline."""
+    import time
+
+    from agent_ready import claude_compatibility
+
+    monkeypatch.setattr(claude_compatibility, "_READ_DEADLINE_S", 1.0)
+    runner = ContractRunner(defect="trickle")
+    started = time.monotonic()
+    with pytest.raises(ProviderError, match="INCOMPATIBLE"):
+        ClaudeAdapter(runner=runner).assess("actual private task")
+    assert time.monotonic() - started < 5
     assert runner.live_calls == 0
 
 
