@@ -61,7 +61,7 @@ The input/output limits and 180-second inference timeout bound ordinary usage, n
 all denial-of-service risks. This is a trusted local subprocess integration, not a
 multi-tenant service. There is no background daemon and nothing listens remotely. The
 capability probe (either provider) opens a temporary listener bound to `127.0.0.1` on an ephemeral
-port for one synthetic request during an assessment and closes it before inference; it
+port for the synthetic probe requests during an assessment and closes it before inference; it
 performs no client authentication, consistent with the trusted-host boundary above.
 
 ## Reporting

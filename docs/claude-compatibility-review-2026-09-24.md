@@ -39,7 +39,23 @@ MCP tripwire each fails at least one test. The explicit deadline check at the to
 read loop is a redundant second guard: the per-read socket timeout is already capped at
 the remaining time, and removing both mechanisms fails the trickle test.
 
-## Review 3
+## Review 3: candidate `e4bf7bc`, ACCEPT
 
-Pending on the repaired candidate. The verdict and candidate SHA are recorded here before
-any landing.
+No BLOCKING or MATERIAL finding remained. Every prior finding was verified against the
+code, the tests and the real `2.1.281` CLI. Two were only partial:
+- R1-5/N3: body reads are bounded, but the header phase is not.
+- N2: a repeated header and an over-long request line are not fully inspected.
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| 1 | MINOR | Commit messages overstate test counts. `2f6ac21` adds 23 tests, not 26 (122 → 145). `e4bf7bc` adds 10, not 13 (157 → 167). | Corrected here; history not rewritten. |
+| 2 | MINOR | The 10 s deadline covers bodies only; trickled header lines held the probe for 30 s. Fails closed. | Docs narrowed. Header deadline deferred as follow-up. |
+| 3 | MINOR | Only the first value of a repeated header is inspected; a >64 KiB request line gets a stdlib 414 unrecorded. | Documented limitation. Deferred follow-up. |
+| 4 | MINOR | Same MCP server name in every scope, so project shadows user scope. The user-scope MCP tripwire is not independently exercised. | Documented limitation. Deferred follow-up (distinct names per scope). |
+| 5 | MINOR | SECURITY.md said the listener serves "one synthetic request". | Corrected. |
+| 6 | MINOR | Recording of unparsable requests (`if ok else None`) has no discriminating test. | Deferred follow-up. |
+| 7 | MINOR | The probe exercises API-key auth only, not the claude.ai OAuth path. | Documented. |
+
+The accepted candidate for landing is `e4bf7bc` plus this docs-only commit, which records
+this review and narrows the documentation. No code or test changes were made after the
+ACCEPT.

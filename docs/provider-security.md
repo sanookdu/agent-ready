@@ -79,12 +79,15 @@ credential. The probe fails if any of the following holds:
   observed from the real CLI;
 - any request carries non-empty `tools`, or a top-level `mcp_servers` or `container`
   key (other ways the Messages API attaches tools);
-- a canary appears anywhere on the wire (request bodies, paths including query
-  strings, or headers), or the synthetic prompt does not appear in a request body;
+- a canary appears in a request body, a request path including its query string, or
+  the first value of a request header; or the synthetic prompt does not appear in a
+  request body;
 - the process exits non-zero, or stdout is not the expected JSON.
 
 The loopback server joins its handler threads before the checks run. Each request
-body must arrive within a total 10-second deadline, so the join is bounded. The probe never
+body must arrive within a total 10-second deadline. The header phase has no total
+deadline: a local client that keeps trickling header lines can hold the probe open
+until it stops. This fails closed, since nothing is sent while the probe waits. The probe never
 invokes live inference, and uses a 10-second help limit and a 60-second subprocess
 limit.
 
@@ -93,7 +96,13 @@ channels, not an allowlist, so a future tool channel under a new key would not b
 by it. `tools: []` and the isolation layers still apply. On macOS, Claude Code may read
 credentials from the Keychain, which is not tied to the home directory; the probe
 relies on the placeholder `ANTHROPIC_API_KEY` taking precedence there, which has not
-been verified on macOS. With subscription OAuth, a token refresh during an assessment
+been verified on macOS. The probe exercises the API-key authentication path only; the
+claude.ai OAuth path is not exercised, although a placeholder OAuth token was observed
+to produce the same requests on 2.1.281. Only the first value of a repeated header is
+inspected, and a request line longer than 64 KiB is rejected by the HTTP layer before it
+is recorded. Every seeded scope names its MCP server `private`, so the project entry
+shadows the user-scope one, and the user-scope MCP tripwire is not exercised
+independently; the assessment home carries no MCP configuration. With subscription OAuth, a token refresh during an assessment
 is written to the temporary credential copy, which is then deleted. If the provider
 rotates refresh tokens, the stored credential could be invalidated. This is untested,
 since testing it needs real credentials. The Codex adapter's copied `auth.json` has the
