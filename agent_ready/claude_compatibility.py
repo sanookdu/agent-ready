@@ -6,6 +6,8 @@ No task text, user authentication, external endpoint or real inference is used.
 
 import json
 import re
+import shlex
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -27,7 +29,16 @@ _REQUIRED_HELP = (
     "--permission-mode",
     "--system-prompt",
 )
-_CANARIES = ("PRIVATE_INSTRUCTION_CANARY", "PRIVATE_SKILL_CANARY", "PROJECT_INSTRUCTION_CANARY")
+_CANARIES = (
+    "PRIVATE_INSTRUCTION_CANARY",
+    "PRIVATE_SKILL_CANARY",
+    "PROJECT_INSTRUCTION_CANARY",
+    "PRIVATE_AGENT_CANARY",
+    "PRIVATE_COMMAND_CANARY",
+    "PRIVATE_STYLE_CANARY",
+)
+# Top-level Messages request keys that can attach tools other than `tools` itself.
+_TOOL_CHANNEL_KEYS = ("mcp_servers", "container")
 _PROBE_TEXT = "Agent Ready capability probe. Return only the synthetic JSON response."
 _RESPONSE_TEXT = '{"probe":"agent-ready"}'
 # Never a real credential: the probe endpoint is loopback and accepts any key.
@@ -39,27 +50,70 @@ def _messages_path(path):
     return path == "/v1/messages" or path.startswith("/v1/messages?")
 
 
+def _tripwire(path):
+    """A local command that records that it ran. Hooks and MCP servers never reach the wire."""
+    return [sys.executable, "-c", f"open({str(path)!r}, 'w').close()"]
+
+
+def _seed_customizations(root, sentinels, label):
+    """Seed every local customization class Claude Code reads from a config root."""
+    claude = root / ".claude"
+    for sub in ("skills/private", "agents", "commands", "output-styles"):
+        (claude / sub).mkdir(parents=True, exist_ok=True, mode=0o700)
+    (claude / "skills" / "private" / "SKILL.md").write_text(
+        "---\nname: private\ndescription: PRIVATE_SKILL_CANARY\n---\nprivate"
+    )
+    (claude / "agents" / "private.md").write_text(
+        "---\nname: private\ndescription: PRIVATE_AGENT_CANARY\n---\nPRIVATE_AGENT_CANARY"
+    )
+    (claude / "commands" / "private.md").write_text("PRIVATE_COMMAND_CANARY")
+    (claude / "output-styles" / "private.md").write_text(
+        "---\nname: private\ndescription: PRIVATE_STYLE_CANARY\n---\nPRIVATE_STYLE_CANARY"
+    )
+    hook = {"type": "command", "command": shlex.join(_tripwire(sentinels / f"{label}-hook"))}
+    (claude / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    event: [{"hooks": [hook]}]
+                    for event in ("UserPromptSubmit", "SessionStart", "Stop")
+                },
+                "outputStyle": "private",
+            }
+        )
+    )
+    command = _tripwire(sentinels / f"{label}-mcp")
+    return {"mcpServers": {"private": {"command": command[0], "args": command[1:]}}}
+
+
 def probe_claude(adapter, assessment_options):
     # Independent probe homes never receive the assessment credential.
     with TemporaryDirectory(prefix="agent-ready-contract-") as directory:
         runtime = Path(directory)
+        sentinels = runtime / "sentinels"
+        sentinels.mkdir()
         env = {
             k: v
             for k, v in assessment_options["env"].items()
             if k not in (*_CREDENTIALS, "ANTHROPIC_BASE_URL", "HOME", "USERPROFILE")
         }
-        # Seed user and project instructions the selected flags must keep out of the request.
-        home = runtime / "home"
-        skill = home / ".claude" / "skills" / "private"
-        skill.mkdir(parents=True, mode=0o700)
-        (home / ".claude" / "CLAUDE.md").write_text(_CANARIES[0])
-        (skill / "SKILL.md").write_text(
-            "---\nname: private\ndescription: PRIVATE_SKILL_CANARY\n---\nprivate"
-        )
+        # Seed an untrusted original home, then exercise the same isolation helper as the
+        # assessment. Nothing seeded there may reach the wire or execute.
+        from .providers import isolated_claude_environment
+
+        origin = runtime / "origin"
+        mcp = _seed_customizations(origin, sentinels, "home")
+        (origin / ".claude" / "CLAUDE.md").write_text(_CANARIES[0])
+        (origin / ".claude.json").write_text(json.dumps(mcp))
+        env["HOME"] = str(origin)
+        env = isolated_claude_environment(env, runtime, copy_auth=False)
+        # Project-level customizations the adapter's flags must exclude, since the working
+        # directory is not isolated by a home change.
         cwd = runtime / "work"
-        cwd.mkdir()
+        mcp = _seed_customizations(cwd, sentinels, "project")
         (cwd / "CLAUDE.md").write_text(_CANARIES[2])
-        env.update(HOME=str(home), USERPROFILE=str(home), ANTHROPIC_API_KEY=_PROBE_KEY)
+        (cwd / ".mcp.json").write_text(json.dumps(mcp))
+        env["ANTHROPIC_API_KEY"] = _PROBE_KEY
         options = {**assessment_options, "env": env, "cwd": cwd}
         help_result = adapter.runner([adapter.executable, "--help"], timeout=10, **options)
         if help_result.returncode or not all(
@@ -74,9 +128,20 @@ def probe_claude(adapter, assessment_options):
                 super().setup()
                 self.connection.settimeout(5)
 
-            def do_GET(self):
-                requests.append(None)  # no read-side traffic is part of the reviewed contract
-                self.send_error(404)
+            def _refuse(self):
+                requests.append(None)  # outside the reviewed contract: never certified
+                self.send_error(405)
+
+            do_GET = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = _refuse
+
+            def do_HEAD(self):
+                # Observed from the real CLI: a body-less connectivity check. Nothing else.
+                if self.path != "/api/hello":
+                    self._refuse()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
             def do_POST(self):
                 try:
@@ -157,7 +222,9 @@ def probe_claude(adapter, assessment_options):
                 pass
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        server.daemon_threads = True
+        # Joined on close, so a request still being read when the CLI exits is inspected too.
+        server.daemon_threads = False
+        server.block_on_close = True
         thread = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
         thread.start()
         try:
@@ -171,8 +238,13 @@ def probe_claude(adapter, assessment_options):
             thread.join(timeout=5)
         if result.returncode or not requests or not all(isinstance(r, dict) for r in requests):
             raise ValueError("Probe request/response failed")
+        if any(sentinels.iterdir()):
+            raise ValueError("A local hook or MCP server executed")
         # Every request the CLI makes must be tool-less, not merely the one carrying the task.
-        if any(request.get("tools") != [] for request in requests):
+        if any(
+            request.get("tools") != [] or any(key in request for key in _TOOL_CHANNEL_KEYS)
+            for request in requests
+        ):
             raise ValueError("Text-only tool contract failed")
         wire = json.dumps(requests)
         if _PROBE_TEXT not in wire or any(canary in wire for canary in _CANARIES):

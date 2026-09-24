@@ -43,12 +43,15 @@ access. Provider software must read authentication and may keep its own state.
 For v0.1 the fully reviewed versions are Codex 0.153.4 and Claude Code 2.1.258
 (`SUPPORTED`). Any other version of either provider must first pass a local
 capability probe — required CLI controls, synthetic requests to a temporary loopback
-endpoint with `tools: []`, no private-instruction leakage, expected JSON output — and
+endpoint with `tools: []`, no private-instruction leakage, no locally executed hook
+or MCP server, expected JSON output — and
 is then classified `COMPATIBLE_UNVERIFIED`; a failed probe blocks submission. The
 probe runs without assessment credentials (Claude receives a fixed non-secret
 placeholder key for the loopback endpoint), but the preceding `--version` discovery
 runs in the assessment environment, which carries the copied Codex `auth.json` or the
-Claude authentication variables. Version strings are
+Claude authentication variables. Claude assessments and probes run in an isolated
+temporary home holding only the copied credential file; see provider evidence for
+what the probe does not prove (including macOS Keychain behaviour). Version strings are
 CLI-reported compatibility checks, not binary attestation. Adapter updates require
 renewed capability review, since flags and default tools can change.
 Managed provider policies may cause a safe error; never remove controls to work around

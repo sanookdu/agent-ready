@@ -48,6 +48,31 @@ def isolated_codex_environment(env, runtime, *, copy_auth=True):
     return env
 
 
+def isolated_claude_environment(env, runtime, *, copy_auth=True):
+    """Use an empty home for both assessments and probes; copy only the credential file.
+
+    Host settings, hooks, MCP servers, instructions, skills, agents, commands, output styles
+    and plugins all live under the user's home. None of them is carried into the isolated one,
+    so the assessment does not rely on CLI flags alone to exclude them.
+    """
+    env = dict(env)
+    original = Path(env.get("HOME", str(Path.home()))) / ".claude"
+    isolated_home = Path(runtime) / "claude-home"
+    (isolated_home / ".claude").mkdir(mode=0o700, parents=True)
+    credential = original / ".credentials.json"
+    if copy_auth and credential.is_file():
+        with credential.open("rb") as stream:
+            auth = stream.read(131073)
+        if len(auth) > 131072:
+            raise ProviderError("Provider authentication artifact exceeds the size limit.")
+        target = isolated_home / ".claude" / ".credentials.json"
+        target.touch(mode=0o600)
+        target.write_bytes(auth)
+    env["HOME"] = str(isolated_home)
+    env["USERPROFILE"] = str(isolated_home)
+    return env
+
+
 class _Adapter:
     executable: str
     version: str
@@ -92,6 +117,8 @@ class _Adapter:
                 cwd.mkdir()
                 if self.executable == "codex":
                     env = isolated_codex_environment(env, runtime)
+                else:
+                    env = isolated_claude_environment(env, runtime)
                 options = dict(
                     text=True, encoding="utf-8", capture_output=True, shell=False, cwd=cwd, env=env
                 )

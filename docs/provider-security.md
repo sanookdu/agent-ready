@@ -51,30 +51,57 @@ return schema-valid assessments, so the exact pin rejected a working provider wh
 proving nothing about the boundary it stood for. It is replaced by the same
 reviewed-set-plus-probe policy as Codex.
 
-The boundary is that the adapter's flags (`--tools ""`, `--safe-mode`,
-`--setting-sources ""`, `--strict-mcp-config` with an empty MCP configuration,
-`--disable-slash-commands`, `--no-session-persistence`, `--permission-mode dontAsk`)
-yield a tool-less model with no host instructions. For each assessment using an
-unlisted Claude Code version, the probe checks those flags appear in `--help`, then
-runs the unmodified assessment command against a temporary loopback fake Messages
-endpoint (`ANTHROPIC_BASE_URL`), with a fixed non-secret placeholder key and no
-assessment credential. A synthetic home carries user-instruction and skill canaries
-and the working directory carries a project-instruction canary. Every request must be
-a strictly decoded `POST /v1/messages` with `tools: []`; any other path or method
-fails. The synthetic prompt must arrive, no canary may appear on the wire, the process
-must exit 0, and stdout must be the expected JSON. It never invokes live inference and
-uses a 10-second help limit and 60-second subprocess limit.
+The boundary has two layers. First, both the assessment and the probe run Claude Code
+under an **isolated temporary home** that contains only the copied credential file
+(`.claude/.credentials.json`, if present), so user settings, hooks, MCP servers
+(`~/.claude.json`), instructions, skills, agents, commands, output styles and plugins
+are never present. This is the same pattern as the Codex adapter. Second, the flags
+(`--tools ""`, `--safe-mode`, `--setting-sources ""`, `--strict-mcp-config` with an
+empty MCP configuration, `--disable-slash-commands`, `--no-session-persistence`,
+`--permission-mode dontAsk`) exclude project-level customizations in the working
+directory, which a home change cannot isolate.
+
+For each assessment using an unlisted Claude Code version, the probe checks those flags
+appear in `--help`. It then seeds an untrusted original home and a project directory
+with every customization class above: instruction, skill, agent, command and
+output-style canaries, plus settings hooks and MCP servers whose commands create
+tripwire files. It applies the same isolation helper as the assessment, and runs the
+unmodified assessment command against a temporary loopback fake Messages endpoint
+(`ANTHROPIC_BASE_URL`) with a fixed non-secret placeholder key and no assessment
+credential. The probe fails if any of the following holds:
+- a tripwire file exists afterwards (a hook or MCP server executed locally);
+- any request is anything other than a strictly decoded `POST /v1/messages`,
+  except a body-less `HEAD /api/hello` connectivity check observed from the real CLI;
+- any request carries non-empty `tools`, or a top-level `mcp_servers` or `container`
+  key (other ways the Messages API attaches tools);
+- a canary appears on the wire, or the synthetic prompt does not;
+- the process exits non-zero, or stdout is not the expected JSON.
+
+The loopback server joins its handler threads before the checks run. The probe never
+invokes live inference, and uses a 10-second help limit and a 60-second subprocess
+limit.
+
+What this does not prove: the check on top-level tool keys is a denylist of known
+channels, not an allowlist, so a future tool channel under a new key would not be caught
+by it. `tools: []` and the isolation layers still apply. On macOS, Claude Code may read
+credentials from the Keychain, which is not tied to the home directory; the probe
+relies on the placeholder `ANTHROPIC_API_KEY` taking precedence there, which has not
+been verified on macOS. If a CLI ignored `ANTHROPIC_BASE_URL`, the synthetic prompt
+would go to the real API with the placeholder key, be refused, and fail closed; no task
+text or credential is sent.
 
 Negative controls observed against the real 2.1.281 CLI on 2026-09-24: removing
 `--tools ""` sends the full tool list; removing `--setting-sources ""` and
-`--safe-mode` leaks the user and project instruction canaries. Both are detected.
+`--safe-mode` leaks the instruction canaries and is refused by the probe.
 Successful Claude assessments now carry host-generated `provider_evidence` with
 `provider: "claude"`; the schema binds each provider to its own version format.
 The reviewed-version set contains only `2.1.258 (Claude Code)`.
 
 Contract transition: the optional field keeps old saved assessments valid, but a reader
 that validates with the earlier schema (`additionalProperties: false`) rejects every
-enriched Codex or Claude result. Readers must tolerate the optional field. The v0.1 contract is
+enriched Codex or Claude result. Readers that adopted the unreleased Codex-probe
+schema (`provider` fixed to `codex`) likewise reject Claude results and must accept
+`claude`. Readers must tolerate the optional field. The v0.1 contract is
 versioned by the package release; a result-level product/schema version identifier is
 tracked separately (issue #1) and is not part of this change.
 

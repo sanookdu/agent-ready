@@ -52,7 +52,8 @@ The executable must be on the MCP host's PATH as well as yours.
 Agent Ready uses your provider access; inference may incur provider charges. Codex
 authentication uses your local `auth.json` or `CODEX_API_KEY`; keyring-only setups
 are not supported in v0.1. Custom provider configurations and models are intentionally
-not inherited. Claude uses its normal authentication with customizations disabled.
+not inherited. Claude runs in an isolated temporary home holding only its copied
+credential file, with customizations disabled.
 
 For GitHub input, install and authenticate `gh` separately:
 

@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 import pytest
@@ -39,9 +40,28 @@ class ContractRunner:
             self.probe_calls += 1
             self.probe_envs.append(dict(kwargs["env"]))
             assert "actual private task" not in kwargs["input"]
+            if self.defect == "project_hook":
+                # A CLI that honoured project settings would run the seeded hook locally,
+                # which never appears on the wire.
+                settings = Path(kwargs["cwd"]) / ".claude" / "settings.json"
+                hooks = json.loads(settings.read_text())["hooks"]["UserPromptSubmit"]
+                subprocess.run(hooks[0]["hooks"][0]["command"], shell=True, check=True)
+            if self.defect in ("head_hello", "head_other"):
+                target = "/api/hello" if self.defect == "head_hello" else "/v1/other"
+                try:
+                    with urlopen(Request(base + target, method="HEAD"), timeout=5) as response:
+                        response.read()
+                except OSError:
+                    pass
+            if self.defect == "get_request":
+                try:
+                    with urlopen(base + "/v1/models", timeout=5) as response:
+                        response.read()
+                except OSError:
+                    pass
             body = {
                 "model": "claude-probe",
-                "stream": True,
+                "stream": self.defect != "non_stream",
                 "tools": [],
                 "system": [{"type": "text", "text": "You assess software work."}],
                 "messages": [
@@ -56,7 +76,19 @@ class ContractRunner:
                 body["system"].append({"type": "text", "text": "PRIVATE_INSTRUCTION_CANARY"})
             if self.defect == "project_leak":
                 body["system"].append({"type": "text", "text": "PROJECT_INSTRUCTION_CANARY"})
+            if self.defect == "skill_leak":
+                body["system"].append({"type": "text", "text": "PRIVATE_SKILL_CANARY"})
+            if self.defect == "mcp_servers":
+                body["mcp_servers"] = [
+                    {"type": "url", "url": "https://example.invalid", "name": "x"}
+                ]
+            if self.defect == "missing_probe_text":
+                body["messages"] = [{"role": "user", "content": "something else"}]
             data = json.dumps(body).encode()
+            if self.defect == "non_dict":
+                data = b"[]"
+            if self.defect == "nan_request":
+                data = json.dumps(body).encode()[:-1] + b',"temperature":NaN}'
             if self.defect == "duplicate_request_keys":
                 # A permissive decoder keeps the LAST "tools" and would certify a tool-exposing CLI.
                 data = (
@@ -96,6 +128,16 @@ class ContractRunner:
                 stderr="",
             )
         self.live_calls += 1
+        home = Path(kwargs["env"]["HOME"])
+        # Only an isolated temporary home is walked; the user's real home is never scanned.
+        if home.resolve() == Path.home().resolve() or not str(home).startswith(
+            str(Path(kwargs["cwd"]).parent)
+        ):
+            self.live_home_files = ["<not isolated: " + str(home) + ">"]
+        else:
+            self.live_home_files = sorted(
+                str(p.relative_to(home)) for p in home.rglob("*") if p.is_file()
+            )
         payload = valid_assessment()
         payload["provider_evidence"] = {"version": "forged", "compatibility": "SUPPORTED"}
         return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload), stderr="")
@@ -138,6 +180,14 @@ def test_reviewed_or_capability_verified_claude_is_accepted(version, classificat
         "duplicate_request_keys",
         "unexpected_path",
         "second_request_with_tools",
+        "skill_leak",
+        "mcp_servers",
+        "missing_probe_text",
+        "non_dict",
+        "nan_request",
+        "get_request",
+        "head_other",
+        "project_hook",
     ],
 )
 def test_incompatible_claude_fails_before_private_assessment(defect):
@@ -147,6 +197,42 @@ def test_incompatible_claude_fails_before_private_assessment(defect):
         adapter.assess("actual private task")
     assert adapter.evidence["compatibility"] == "INCOMPATIBLE"
     assert runner.live_calls == 0
+
+
+@pytest.mark.parametrize("variant", ["non_stream", "head_hello"])
+def test_observed_benign_cli_behaviour_passes_the_probe(variant):
+    """The real CLI sends HEAD /api/hello; non-streaming requests get a plain JSON reply."""
+    runner = ContractRunner(defect=variant)
+    ClaudeAdapter(runner=runner).assess("actual private task")
+    assert runner.live_calls == 1
+
+
+def _seed_home(home: Path) -> None:
+    (home / ".claude" / "skills" / "private").mkdir(parents=True)
+    (home / ".claude" / ".credentials.json").write_text('{"claudeAiOauth":"placeholder"}')
+    (home / ".claude" / "CLAUDE.md").write_text("PRIVATE_INSTRUCTION_CANARY")
+    (home / ".claude" / "settings.json").write_text('{"hooks":{}}')
+    (home / ".claude" / "skills" / "private" / "SKILL.md").write_text("PRIVATE_SKILL_CANARY")
+    (home / ".claude.json").write_text('{"mcpServers":{}}')
+
+
+def test_claude_assessment_runs_in_isolated_home_with_only_the_credential(monkeypatch, tmp_path):
+    """Review finding: the probe's synthetic home must not be the only isolated path. The
+    assessment itself must never see host instructions, settings, hooks or MCP servers."""
+    _seed_home(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = ContractRunner()
+    ClaudeAdapter(runner=runner).assess("actual private task")
+    assert runner.live_home_files == [".claude/.credentials.json"]
+
+
+def test_claude_assessment_home_is_empty_without_a_credential_file(monkeypatch, tmp_path):
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "CLAUDE.md").write_text("PRIVATE_INSTRUCTION_CANARY")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    runner = ContractRunner()
+    ClaudeAdapter(runner=runner).assess("actual private task")
+    assert runner.live_home_files == []
 
 
 @pytest.mark.parametrize(
