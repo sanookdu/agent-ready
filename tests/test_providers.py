@@ -33,6 +33,9 @@ def test_adapters_invoke_constrained_provider_commands(adapter_class, expected):
     adapter = adapter_class(runner=runner)
     assert adapter.assess("prompt") == {}
     assert runner.calls[0][0][: len(expected)] == expected
+    if adapter_class is CodexAdapter:
+        command = runner.calls[0][0]
+        assert command[command.index("--disable") + 1] == "goals"
     assert runner.calls[0][1]["input"] == "prompt"
     assert runner.calls[0][1]["shell"] is False
 

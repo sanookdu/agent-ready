@@ -187,6 +187,8 @@ class CodexAdapter(_Adapter):
             "read-only",
             "--ignore-user-config",
             "--ignore-rules",
+            "--disable",
+            "goals",
             "--ephemeral",
             "--skip-git-repo-check",
             "--color",
